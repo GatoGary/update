@@ -1,0 +1,71 @@
+@'
+name: Resign TUF metadata
+
+on:
+  schedule:
+    - cron: '0 3 1,15 * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  resign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Instalar tufup
+        run: pip install tufup
+
+      - name: Crear archivo de configuracion del repositorio TUF
+        run: |
+          cat > .tufup-repo-config << 'EOF'
+          {
+              "app_name": "MiApp",
+              "app_version_attr": null,
+              "binary_diff": null,
+              "encrypted_keys": [],
+              "expiration_days": {
+                  "root": 365,
+                  "snapshot": 30,
+                  "targets": 100,
+                  "timestamp": 30
+              },
+              "key_map": {
+                  "root": ["root"],
+                  "snapshot": ["snapshot"],
+                  "targets": ["targets"],
+                  "timestamp": ["timestamp"]
+              },
+              "keys_dir": "keystore",
+              "repo_dir": "repository",
+              "thresholds": {
+                  "root": 1,
+                  "snapshot": 1,
+                  "targets": 1,
+                  "timestamp": 1
+              }
+          }
+          EOF
+
+      - name: Descargar metadata actual desde el Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p repository/metadata
+          gh release download tuf-repo --repo ${{ github.repository }} --pattern "*.json" --dir repository/metadata --clobber
+
+      - name: Reconstruir las claves privadas de snapshot y timestamp
+        run: |
+          mkdir -p keystore
+          echo "${{ secrets.TUFUP_SNAPSHOT_KEY }}" | base64 -d > keystore/snapshot
+          echo "${{ secrets.TUFUP_TIMESTAMP_KEY }}" | base64 -d > keystore/timestamp
+
+      - name: Re-firmar snapshot y timestamp
+        run: tufup sign snapshot keystore
+
+      - name: Subir la metadata renovada al Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload tuf-repo --repo ${{ github.repository }} repository/metadata/snapshot.json repository/metadata/timestamp.json --clobber
+'@ | Set-Content -Path ".github\workflows\resign.yml" -Encoding utf8NoBOM
